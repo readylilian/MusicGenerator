@@ -1,78 +1,114 @@
 import fluidsynth
-# import magenta
+import magenta
+from magenta.common import merge_hparams
+from magenta.contrib import training as contrib_training
+from magenta.models.music_vae import data
+from magenta.models.music_vae import data_hierarchical
+from magenta.models.music_vae import lstm_models
+from magenta.models.music_vae.base_model import MusicVAE
 import note_seq
-# import tensorflow
+import tensorflow
 import glob
+import collections
+
+# hparams is hyperparameters, increasing free_bits
+# and decreasing max_deta creates better replicas but worse random samples
+HParams = contrib_training.HParams
 
 
-def test1():
-    from note_seq.protobuf import music_pb2
-
-    twinkle_twinkle = music_pb2.NoteSequence()
-
-    # Add the notes to the sequence.
-    twinkle_twinkle.notes.add(pitch=60, start_time=0.0, end_time=0.5, velocity=80)
-    twinkle_twinkle.notes.add(pitch=60, start_time=0.5, end_time=1.0, velocity=80)
-    twinkle_twinkle.notes.add(pitch=67, start_time=1.0, end_time=1.5, velocity=80)
-    twinkle_twinkle.notes.add(pitch=67, start_time=1.5, end_time=2.0, velocity=80)
-    twinkle_twinkle.notes.add(pitch=69, start_time=2.0, end_time=2.5, velocity=80)
-    twinkle_twinkle.notes.add(pitch=69, start_time=2.5, end_time=3.0, velocity=80)
-    twinkle_twinkle.notes.add(pitch=67, start_time=3.0, end_time=4.0, velocity=80)
-    twinkle_twinkle.notes.add(pitch=65, start_time=4.0, end_time=4.5, velocity=80)
-    twinkle_twinkle.notes.add(pitch=65, start_time=4.5, end_time=5.0, velocity=80)
-    twinkle_twinkle.notes.add(pitch=64, start_time=5.0, end_time=5.5, velocity=80)
-    twinkle_twinkle.notes.add(pitch=64, start_time=5.5, end_time=6.0, velocity=80)
-    twinkle_twinkle.notes.add(pitch=62, start_time=6.0, end_time=6.5, velocity=80)
-    twinkle_twinkle.notes.add(pitch=62, start_time=6.5, end_time=7.0, velocity=80)
-    twinkle_twinkle.notes.add(pitch=60, start_time=7.0, end_time=8.0, velocity=80)
-    twinkle_twinkle.total_time = 8
-
-    twinkle_twinkle.tempos.add(qpm=60)
-
-    # This is a colab utility method that visualizes a NoteSequence.
-    note_seq.plot_sequence(twinkle_twinkle)
-
-    # This is a colab utility method that plays a NoteSequence.
-    note_seq.play_sequence(twinkle_twinkle, synth=note_seq.fluidsynth)
-
-    # Here's another NoteSequence!
-    teapot = music_pb2.NoteSequence()
-    teapot.notes.add(pitch=69, start_time=0, end_time=0.5, velocity=80)
-    teapot.notes.add(pitch=71, start_time=0.5, end_time=1, velocity=80)
-    teapot.notes.add(pitch=73, start_time=1, end_time=1.5, velocity=80)
-    teapot.notes.add(pitch=74, start_time=1.5, end_time=2, velocity=80)
-    teapot.notes.add(pitch=76, start_time=2, end_time=2.5, velocity=80)
-    teapot.notes.add(pitch=81, start_time=3, end_time=4, velocity=80)
-    teapot.notes.add(pitch=78, start_time=4, end_time=5, velocity=80)
-    teapot.notes.add(pitch=81, start_time=5, end_time=6, velocity=80)
-    teapot.notes.add(pitch=76, start_time=6, end_time=8, velocity=80)
-    teapot.total_time = 8
-
-    teapot.tempos.add(qpm=60)
-
-    note_seq.plot_sequence(teapot)
-    note_seq.play_sequence(teapot, synth=note_seq.synthesize)
+# sets up the config class later used to train the model
 
 
-def importsongs():
+class Config(collections.namedtuple(
+    'Config',
+    ['model', 'hparams', 'note_sequence_augmenter',
+     'data_converter', 'train_examples_path', 'eval_examples_path',
+     'tfds_name'])):
+    def values(self):
+        return self._asdict()
+
+
+# sets everything in config to default values
+Config.__new__.__defaults__ = (None,) * len(Config._fields)
+
+
+# allows the config class to update itself
+def update_config(config, update_dict):
+    config_dict = config.values()
+    config_dict.update(update_dict)
+    return Config(**config_dict)
+
+
+CONFIG_MAP = {}
+
+# imports 3 sets of songs from the files in the project
+# converts these midi files to note sequences and stores in a list
+
+
+def import_songs():
     from note_seq.protobuf import music_pb2
     count = 0
-
     midi1_set = glob.glob("./MidiSet1/*.mid")
     midi2_set = glob.glob("./MidiSet2/*.mid")
     midi3_set = glob.glob("./MidiSet3/*.mid")
+    note1_set = []
+    note2_set = []
+    note3_set = []
 
     for x in midi1_set:
-        # sequence = music_pb2.NoteSequence()
         sequence = note_seq.midi_file_to_note_sequence(midi1_set[count])
-        sequence.total_time = 60
-        note_seq.play_sequence(sequence, synth=note_seq.synthesize)
+        note1_set.append(sequence)
+        # note_seq.play_sequence(sequence, synth=note_seq.synthesize)
         count += 1
+    count = 0
+    for x in midi2_set:
+        sequence = note_seq.midi_file_to_note_sequence(midi2_set[count])
+        note2_set.append(sequence)
+        # note_seq.play_sequence(sequence, synth=note_seq.synthesize)
+        count += 1
+    count = 0
+    for x in midi3_set:
+        sequence = note_seq.midi_file_to_note_sequence(midi3_set[count])
+        note3_set.append(sequence)
+        # note_seq.play_sequence(sequence, synth=note_seq.synthesize)
+        count += 1
+
+
+# initializes a 16 bar trio model to train
+trio_16bar_converter = data.TrioConverter(
+    steps_per_quarter=4,
+    slice_bars=16,
+    gap_bars=2)
+# simplest version of the 16 bar trio because it has the largest size
+# and I can understand it best
+CONFIG_MAP['flat-trio_16bar'] = Config(
+    model=MusicVAE(
+        lstm_models.BidirectionalLstmEncoder(),
+        lstm_models.MultiOutCategoricalLstmDecoder(
+            output_depths=[
+                90,  # melody
+                90,  # bass
+                512,  # drums
+            ])),
+    hparams=merge_hparams(
+        lstm_models.get_default_hparams(),
+        HParams(
+            batch_size=256,
+            max_seq_len=256,
+            z_size=512,
+            enc_rnn_size=[2048, 2048],
+            dec_rnn_size=[2048, 2048, 2048],
+        )),
+    note_sequence_augmenter=None,
+    data_converter=trio_16bar_converter,
+    train_examples_path='./MidiSet1/',
+    eval_examples_path=None,
+)
 
 
 def main():
     # test1()
-    importsongs()
+    import_songs()
 
 
 if __name__ == '__main__':
