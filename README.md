@@ -1,3 +1,4 @@
+Rip.ipynb is the working version
 # MusicGenerator
 **Goals In Order of Importance:**
 - Be able to import a file, read it into notes that can then be processed
