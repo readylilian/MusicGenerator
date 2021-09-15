@@ -1,4 +1,4 @@
-Rip.ipynb is the working version
+[Rip.ipynb](https://colab.research.google.com/drive/1O8bjYpliYZbOv5KoEDY6JJgdPvTif_Ux?usp=sharing) is the working version (needed to used Google Collab)
 # MusicGenerator
 **Goals In Order of Importance:**
 - Be able to import a file, read it into notes that can then be processed
